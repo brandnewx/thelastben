@@ -1,6 +1,6 @@
-accelerate
-torchvision
-transformers>=4.21.0
-ftfy
-tensorboard
-modelcards
+accelerate==0.12.0
+torchvision==0.14.0
+transformers==4.23.1
+ftfy==6.1.1
+tensorboard==2.11.0
+modelcards==0.1.6
