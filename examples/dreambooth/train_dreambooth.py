@@ -391,6 +391,11 @@ def main():
     args = parse_args()
     logging_dir = Path(args.output_dir, args.logging_dir)
     i = args.save_starting_step
+
+    if args.seed is None or args.seed == 0:
+        args.seed = 1337
+    set_seed(args.seed)
+
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
@@ -410,13 +415,10 @@ def main():
             "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
         )
 
-    if args.seed is not None:
-        set_seed(args.seed)
-
     if args.with_prior_preservation:
         class_images_dir = Path(args.class_data_dir)
         if not class_images_dir.exists():
-            class_images_dir.mkdir(parents=True)
+            class_images_dir.mkdir(parents=True, exist_ok=True)
         cur_class_images = len(list(class_images_dir.iterdir()))
 
         if cur_class_images < args.num_class_images:
@@ -485,10 +487,12 @@ def main():
         if args.train_text_encoder:
             text_encoder.gradient_checkpointing_enable()
 
+    print("learning_rate: " + str(args.learning_rate))
     if args.scale_lr:
         args.learning_rate = (
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
+    print("learning_rate (after scaled): " + str(args.learning_rate))
 
     # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
     if args.use_8bit_adam:
@@ -636,6 +640,8 @@ def main():
         if args.train_text_encoder:
             text_encoder.train()
         for step, batch in enumerate(train_dataloader):
+            # set_seed(args.seed + 10000 * (global_step % 100000))
+
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
@@ -717,6 +723,7 @@ def main():
                         text_encoder=accelerator.unwrap_model(text_encoder),
                     )
                     pipeline.text_encoder.save_pretrained(frz_dir)
+                    del pipeline
                 else:
                     print("DID NOT freeze text encoder as not in the main process!")
 
@@ -739,6 +746,7 @@ def main():
                             text_encoder=accelerator.unwrap_model(text_encoder),
                         )
                         pipeline.save_pretrained(save_dir)
+                        del pipeline
                         frz_dir = args.output_dir + "/text_encoder_frozen"
                         if args.train_text_encoder and os.path.exists(frz_dir):
                             #subprocess.call('rm -r '+save_dir+'/text_encoder/*.*', shell=True)
@@ -768,6 +776,7 @@ def main():
         )
         frz_dir = args.output_dir + "/text_encoder_frozen"
         pipeline.save_pretrained(args.output_dir)
+        del pipeline
         if args.train_text_encoder and os.path.exists(frz_dir):
             #subprocess.call('mv -f '+frz_dir +'/*.* '+ args.output_dir+'/text_encoder', shell=True)
             #subprocess.call('rm -r '+ frz_dir, shell=True)
@@ -780,6 +789,8 @@ def main():
             repo.push_to_hub(commit_message="End of training", blocking=False, auto_lfs_prune=True)
 
     accelerator.end_training()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Save state for resuming
     session["session_step"] += args.max_train_steps
