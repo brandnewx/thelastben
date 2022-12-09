@@ -488,6 +488,7 @@ def main():
             text_encoder.gradient_checkpointing_enable()
 
     print("learning_rate: " + str(args.learning_rate))
+    print("num_processes: " + str(accelerator.num_processes))
     if args.scale_lr:
         args.learning_rate = (
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
