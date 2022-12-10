@@ -598,6 +598,7 @@ def main():
             class_subdirs = [x for x in instance_images_dir.iterdir() if x.is_dir()]
             for class_subdir in class_subdirs:
                 class_images_dir = Path(os.path.join(args.class_data_dir, class_subdir.name))
+                class_images_dir.mkdir(parents=True, exist_ok=True)
                 generate_class_samples(args, accelerator=accelerator, class_images_dir=class_images_dir, class_prompt=class_subdir.name)
 
     # Handle the repository creation
