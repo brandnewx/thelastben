@@ -2,6 +2,7 @@ import argparse
 import itertools
 import math
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 import subprocess
@@ -197,6 +198,7 @@ def parse_args():
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
         ),
     )
+    parser.add_argument("--not_cache_latents", action="store_true", help="Do not precompute and cache latents from VAE.")
     parser.add_argument(
         "--mixed_precision",
         type=str,
@@ -515,6 +517,32 @@ class PromptDataset(Dataset):
         return example
 
 
+class LatentsDataset(Dataset):
+    def __init__(self, latents_cache, text_encoder_cache):
+        self.latents_cache = latents_cache
+        self.text_encoder_cache = text_encoder_cache
+
+    def __len__(self):
+        return len(self.latents_cache)
+
+    def __getitem__(self, index):
+        return self.latents_cache[index], self.text_encoder_cache[index]
+
+
+class AverageMeter:
+    def __init__(self, name=None):
+        self.name = name
+        self.reset()
+
+    def reset(self):
+        self.sum = self.count = self.avg = 0
+
+    def update(self, val, n=1):
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
 def get_full_repo_name(model_id: str, organization: Optional[str] = None, token: Optional[str] = None):
     if token is None:
         token = HfFolder.get_token()
@@ -548,7 +576,7 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
     for example in tqdm(
         sample_dataloader, desc="Generating class images for '{class_prompt}'", disable=not accelerator.is_local_main_process
     ):
-        with torch.autocast("cuda"):
+        with torch.autocast("cuda"), torch.inference_mode():
             images = pipeline(example["prompt"]).images
 
         for i, image in enumerate(images):
@@ -725,8 +753,42 @@ def main():
         return batch
 
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn
+        train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True
     )
+
+    weight_dtype = torch.float32
+    if args.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif args.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+
+    # Move text_encode and vae to gpu.
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
+    vae.to(accelerator.device, dtype=weight_dtype)
+    if not args.train_text_encoder:
+        text_encoder.to(accelerator.device, dtype=weight_dtype)
+
+    if not args.not_cache_latents:
+        latents_cache = []
+        text_encoder_cache = []
+        for batch in tqdm(train_dataloader, desc="Caching latents"):
+            with torch.no_grad():
+                batch["pixel_values"] = batch["pixel_values"].to(accelerator.device, non_blocking=True, dtype=weight_dtype)
+                batch["input_ids"] = batch["input_ids"].to(accelerator.device, non_blocking=True)
+                latents_cache.append(vae.encode(batch["pixel_values"]).latent_dist)
+                if args.train_text_encoder:
+                    text_encoder_cache.append(batch["input_ids"])
+                else:
+                    text_encoder_cache.append(text_encoder(batch["input_ids"])[0])
+        train_dataset = LatentsDataset(latents_cache, text_encoder_cache)
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=1, collate_fn=lambda x: x, shuffle=True)
+
+        del vae
+        if not args.train_text_encoder:
+            del text_encoder
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -750,19 +812,6 @@ def main():
         unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
             unet, optimizer, train_dataloader, lr_scheduler
         )
-
-    weight_dtype = torch.float32
-    if args.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif args.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-
-    # Move text_encode and vae to gpu.
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
-    vae.to(accelerator.device, dtype=weight_dtype)
-    if not args.train_text_encoder:
-        text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -807,6 +856,8 @@ def main():
         with open(sessionFilePath, "r") as f:
             session = json.load(f)
 
+    loss_avg = AverageMeter()
+    text_enc_context = nullcontext() if args.train_text_encoder else torch.no_grad()
     for epoch in range(args.num_train_epochs):
         unet.train()
         if args.train_text_encoder:
@@ -816,8 +867,12 @@ def main():
 
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                latents = latents * 0.18215
+                with torch.no_grad():
+                    if not args.not_cache_latents:
+                        latent_dist = batch[0][0]
+                    else:
+                        latent_dist = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist
+                    latents = latent_dist.sample() * 0.18215
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -831,7 +886,14 @@ def main():
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                with text_enc_context:
+                    if not args.not_cache_latents:
+                        if args.train_text_encoder:
+                            encoder_hidden_states = text_encoder(batch[0][1])[0]
+                        else:
+                            encoder_hidden_states = batch[0][1]
+                    else:
+                        encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 # Predict the noise residual
                 noise_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
