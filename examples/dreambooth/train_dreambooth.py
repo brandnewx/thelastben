@@ -273,16 +273,17 @@ class ClassDataProvider:
         class_prompt: str
     ):
         self.class_prompt = class_prompt
-        class_data_dir = os.path.join(class_data_root, class_prompt)
+        class_data_dir = Path(os.path.join(class_data_root, class_prompt))
         class_data_dir.mkdir(parents=True, exist_ok=True)
         self.class_images = [x for x in class_data_dir.iterdir() if not x.is_dir()]
         self.cursor = 0
         if len(self.class_images) <= 0:
             raise ValueError(f"Empty class directory: {class_data_dir}")
 
-    def take_one(self):
+    def take_one(self) -> Path:
         r = self.class_images[self.cursor]
         self.cursor = (self.cursor + 1) % len(self.class_images)
+        return r
 
 
 class SubfolderModeDataset(Dataset):
@@ -311,23 +312,31 @@ class SubfolderModeDataset(Dataset):
         class_subdirs = [x for x in Path(instance_data_root).iterdir() if x.is_dir()]
         if len(class_subdirs) <= 0:
             raise ValueError("Instance image root directory does not have any class subfolders.")
+        elif len(class_subdirs) > 3:
+            raise ValueError(f"Class subfolders ({len(class_subdirs)}) exceed memory limit.")
         self.classes = {}
         self.instance_images_path = []
         for class_subdir in class_subdirs:
             self.classes[class_subdir.name] = ClassDataProvider(class_data_root=class_data_root,
                                                                 class_prompt=class_subdir.name)
 
-            images_path = [x for x in class_subdir.iterdir() if not x.is_dir()]
-            self.instance_images_path.append(images_path)
+            # Commented out as directory structure is strictly ./class_prompt/group_name/instance_prompt (x).jpg
+            # images_path = [x for x in class_subdir.iterdir() if not x.is_dir()]
+            # self.instance_images_path.extend(images_path)
 
             instance_images_dirs = [x for x in class_subdir.iterdir() if x.is_dir()]
-            if len(instance_images_dirs > 0):
+            if len(instance_images_dirs) > 0:
+                if len(instance_images_dirs) > 5:
+                    raise ValueError(f"Instance image directories ({len(instance_images_dirs)}) exceed memory limit.")
                 for instance_images_dir in instance_images_dirs:
                     images_path = [x for x in instance_images_dir.iterdir() if not x.is_dir()]
-                    self.instance_images_path.append(images_path)
+                    self.instance_images_path.extend(images_path)
 
         self.num_instance_images = len(self.instance_images_path)
         self._length = self.num_instance_images
+
+        print(f"Initializing SubfolderModeDataset, {len(class_subdirs)} classes, {self.num_instance_images} instance images...")
+        sys.stdout.flush()
 
         self.image_transforms = transforms.Compose(
             [
@@ -587,6 +596,7 @@ def main():
             "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
         )
 
+    # Generate class images if needed.
     if args.with_prior_preservation:
         if not args.subfolder_mode:
             class_images_dir = Path(args.class_data_dir)
