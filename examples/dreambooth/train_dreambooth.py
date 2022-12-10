@@ -32,6 +32,11 @@ logger = get_logger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
+        "--subfolder_mode",
+        action="store_true",
+        help="Whether to train on images in subfolders in the format of ./class_prompt/group_name/text_prompt (1).jpg",
+    )
+    parser.add_argument(
         "--save_intermediary_dirs",
         default=0,
         type=int,
@@ -251,7 +256,7 @@ def parse_args():
     if args.with_prior_preservation:
         if args.class_data_dir is None:
             raise ValueError("You must specify a data directory for class images.")
-        if args.class_prompt is None:
+        if args.class_prompt is None and not args.subfolder_mode:
             raise ValueError("You must specify prompt for class images.")
 
     return args
@@ -383,6 +388,40 @@ def get_full_repo_name(model_id: str, organization: Optional[str] = None, token:
         return f"{organization}/{model_id}"
 
 
+def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Path, class_prompt: str):
+    cur_class_images = len(list(class_images_dir.iterdir()))
+    num_new_images = args.num_class_images - cur_class_images
+    if num_new_images <= 0:
+        return
+
+    torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
+    pipeline = StableDiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path, torch_dtype=torch_dtype
+    )
+    pipeline.set_progress_bar_config(disable=True)
+
+    logger.info(f"Number of class images to sample: {num_new_images}.")
+
+    sample_dataset = PromptDataset(class_prompt, num_new_images)
+    sample_dataloader = torch.utils.data.DataLoader(sample_dataset, batch_size=args.sample_batch_size)
+
+    sample_dataloader = accelerator.prepare(sample_dataloader)
+    pipeline.to(accelerator.device)
+
+    for example in tqdm(
+        sample_dataloader, desc="Generating class images for '{class_prompt}'", disable=not accelerator.is_local_main_process
+    ):
+        with torch.autocast("cuda"):
+            images = pipeline(example["prompt"]).images
+
+        for i, image in enumerate(images):
+            image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
+
+    del pipeline
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def main():
     # Clear cache
     if torch.cuda.is_available():
@@ -395,6 +434,11 @@ def main():
     if args.seed is None or args.seed == 0:
         args.seed = 1337
     set_seed(args.seed)
+
+    if args.subfolder_mode:
+        args.image_captions_filename = True
+        args.with_prior_preservation = True
+        args.prior_loss_weight = 1.0
 
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -416,39 +460,17 @@ def main():
         )
 
     if args.with_prior_preservation:
-        class_images_dir = Path(args.class_data_dir)
-        if not class_images_dir.exists():
+        if not args.subfolder_mode:
+            class_images_dir = Path(args.class_data_dir)
             class_images_dir.mkdir(parents=True, exist_ok=True)
-        cur_class_images = len(list(class_images_dir.iterdir()))
-
-        if cur_class_images < args.num_class_images:
-            torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
-            pipeline = StableDiffusionPipeline.from_pretrained(
-                args.pretrained_model_name_or_path, torch_dtype=torch_dtype
-            )
-            pipeline.set_progress_bar_config(disable=True)
-
-            num_new_images = args.num_class_images - cur_class_images
-            logger.info(f"Number of class images to sample: {num_new_images}.")
-
-            sample_dataset = PromptDataset(args.class_prompt, num_new_images)
-            sample_dataloader = torch.utils.data.DataLoader(sample_dataset, batch_size=args.sample_batch_size)
-
-            sample_dataloader = accelerator.prepare(sample_dataloader)
-            pipeline.to(accelerator.device)
-
-            for example in tqdm(
-                sample_dataloader, desc="Generating class images", disable=not accelerator.is_local_main_process
-            ):
-                with torch.autocast("cuda"):
-                    images = pipeline(example["prompt"]).images
-
-                for i, image in enumerate(images):
-                    image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
-
-            del pipeline
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            generate_class_samples(args, accelerator=accelerator, class_images_dir=class_images_dir, class_prompt=args.class_prompt)
+        else:
+            instance_images_dir = Path(args.instance_data_dir)
+            instance_images_dir.mkdir(parents=True, exist_ok=True)
+            class_subdirs = [x for x in instance_images_dir.iterdir() if x.is_dir()]
+            for class_subdir in class_subdirs:
+                class_images_dir = Path(os.path.join(args.class_data_dir, class_subdir.name))
+                generate_class_samples(args, accelerator=accelerator, class_images_dir=class_images_dir, class_prompt=class_subdir.name)
 
     # Handle the repository creation
     if accelerator.is_main_process:
