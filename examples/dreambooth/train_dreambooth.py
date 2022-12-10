@@ -262,6 +262,134 @@ def parse_args():
     return args
 
 
+class ClassDataProvider:
+    """
+    Provides class image paths in round-robin.
+    """
+
+    def __init__(
+        self,
+        class_data_root: str,
+        class_prompt: str
+    ):
+        self.class_prompt = class_prompt
+        class_data_dir = os.path.join(class_data_root, class_prompt)
+        class_data_dir.mkdir(parents=True, exist_ok=True)
+        self.class_images = [x for x in class_data_dir.iterdir() if not x.is_dir()]
+        self.cursor = 0
+        if len(self.class_images) <= 0:
+            raise ValueError(f"Empty class directory: {class_data_dir}")
+
+    def take_one(self):
+        r = self.class_images[self.cursor]
+        self.cursor = (self.cursor + 1) % len(self.class_images)
+
+
+class SubfolderModeDataset(Dataset):
+    """
+    A dataset to prepare the instance and class images (in subfolder mode) with the prompts for fine-tuning the model.
+    It pre-processes the images and the tokenizes prompts.
+    """
+
+    def __init__(
+        self,
+        instance_data_root,
+        tokenizer,
+        args,
+        class_data_root,
+        size=512,
+        center_crop=False,
+    ):
+        self.size = size
+        self.center_crop = center_crop
+        self.tokenizer = tokenizer
+
+        if not Path(instance_data_root).exists():
+            raise ValueError("Instance images root doesn't exists.")
+
+        # Get all the nested classes and instance images
+        class_subdirs = [x for x in Path(instance_data_root).iterdir() if x.is_dir()]
+        if len(class_subdirs) <= 0:
+            raise ValueError("Instance image root directory does not have any class subfolders.")
+        self.classes = {}
+        self.instance_images_path = []
+        for class_subdir in class_subdirs:
+            self.classes[class_subdir.name] = ClassDataProvider(class_data_root=class_data_root,
+                                                                class_prompt=class_subdir.name)
+
+            images_path = [x for x in class_subdir.iterdir() if not x.is_dir()]
+            self.instance_images_path.append(images_path)
+
+            instance_images_dirs = [x for x in class_subdir.iterdir() if x.is_dir()]
+            if len(instance_images_dirs > 0):
+                for instance_images_dir in instance_images_dirs:
+                    images_path = [x for x in instance_images_dir.iterdir() if not x.is_dir()]
+                    self.instance_images_path.append(images_path)
+
+        self.num_instance_images = len(self.instance_images_path)
+        self._length = self.num_instance_images
+
+        self.image_transforms = transforms.Compose(
+            [
+                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index):
+        example = {}
+        path = self.instance_images_path[index % self.num_instance_images]
+        instance_image = Image.open(path)
+        if not instance_image.mode == "RGB":
+            instance_image = instance_image.convert("RGB")
+
+        # Get instant prompt from file name
+        filename = Path(path).stem
+        pt = ''.join([i for i in filename if not i.isdigit()])
+        pt = pt.replace("_", " ")
+        pt = pt.replace("(", "")
+        pt = pt.replace(")", "")
+        pt = pt.replace("-", "")
+        pt = pt.replace(",,", ",").replace(",,", ",").replace(",,", ",")
+        instance_prompt = pt
+        sys.stdout.write(" [0;32m" + instance_prompt + " [0m")
+        sys.stdout.flush()
+
+        # Get instance images
+        example["instance_images"] = self.image_transforms(instance_image)
+        example["instance_prompt_ids"] = self.tokenizer(
+            instance_prompt,
+            padding="do_not_pad",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+        ).input_ids
+
+        # Get class prompt from instance image path
+        class_prompt = path.parent.parent.name
+        class_data = self.classes[class_prompt]
+        if class_data is None:
+            raise ValueError("Class data does not exist for class prompt: " + class_prompt)
+
+        # Get class images for the instance image
+        class_image = Image.open(class_data.take_one())
+        if not class_image.mode == "RGB":
+            class_image = class_image.convert("RGB")
+        example["class_images"] = self.image_transforms(class_image)
+        example["class_prompt_ids"] = self.tokenizer(
+            class_prompt,
+            padding="do_not_pad",
+            truncation=True,
+            max_length=self.tokenizer.model_max_length,
+        ).input_ids
+
+        return example
+
+
 class DreamBoothDataset(Dataset):
     """
     A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
@@ -543,16 +671,26 @@ def main():
 
     noise_scheduler = PNDMScheduler.from_config(args.pretrained_model_name_or_path, subfolder="scheduler")
 
-    train_dataset = DreamBoothDataset(
-        instance_data_root=args.instance_data_dir,
-        instance_prompt=args.instance_prompt,
-        class_data_root=args.class_data_dir if args.with_prior_preservation else None,
-        class_prompt=args.class_prompt,
-        tokenizer=tokenizer,
-        size=args.resolution,
-        center_crop=args.center_crop,
-        args=args,
-    )
+    if not args.subfolder_mode:
+        train_dataset = DreamBoothDataset(
+            instance_data_root=args.instance_data_dir,
+            instance_prompt=args.instance_prompt,
+            class_data_root=args.class_data_dir if args.with_prior_preservation else None,
+            class_prompt=args.class_prompt,
+            tokenizer=tokenizer,
+            size=args.resolution,
+            center_crop=args.center_crop,
+            args=args,
+        )
+    else:
+        train_dataset = SubfolderModeDataset(
+            instance_data_root=args.instance_data_dir,
+            tokenizer=tokenizer,
+            args=args,
+            class_data_root=args.class_data_dir,
+            size=args.resolution,
+            center_crop=args.center_crop,
+        )
 
     def collate_fn(examples):
         input_ids = [example["instance_prompt_ids"] for example in examples]
