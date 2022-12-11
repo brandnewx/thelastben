@@ -617,7 +617,11 @@ def convert_ldm_bert_checkpoint(checkpoint, config):
 
 
 def convert_ldm_clip_checkpoint(checkpoint):
-    text_model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+    if os.path.exists(args.clipvit_path):
+        text_model = CLIPTokenizer.from_pretrained(args.clipvit_path)
+    else:
+        raise ValueError(f"--clipvit_path doesn't exist: {args.clipvit_path}")
+        # text_model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
 
     keys = list(checkpoint.keys())
 
@@ -653,10 +657,17 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--session_dir",
+        "--clipvit_path",
         default="",
         type=str,
-        help="Sessions dir",
+        help="clip-vit dir",
+    )
+
+    parser.add_argument(
+        "--bert_path",
+        default="",
+        type=str,
+        help="bert dir",
     )
 
     parser.add_argument(
@@ -737,10 +748,11 @@ if __name__ == "__main__":
     text_model_type = original_config.model.params.cond_stage_config.target.split(".")[-1]
     if text_model_type == "FrozenCLIPEmbedder":
         text_model = convert_ldm_clip_checkpoint(checkpoint)
-        if os.path.exists(str(args.session_dir + '/tokenizer')):
-            tokenizer = CLIPTokenizer.from_pretrained(args.session_dir, subfolder="tokenizer")
+        if os.path.exists(args.clipvit_path):
+            tokenizer = CLIPTokenizer.from_pretrained(args.clipvit_path)
         else:
-            tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+            raise ValueError(f"--clipvit_path doesn't exist: {args.clipvit_path}")
+            # tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
         safety_checker = None
         feature_extractor = None
         pipe = StableDiffusionPipeline(
@@ -755,7 +767,11 @@ if __name__ == "__main__":
     else:
         text_config = create_ldm_bert_config(original_config)
         text_model = convert_ldm_bert_checkpoint(checkpoint, text_config)
-        tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+        if os.path.exists(args.bert_path):
+            tokenizer = CLIPTokenizer.from_pretrained(args.bert_path)
+        else:
+            raise ValueError(f"--bert_path doesn't exist: {args.bert_path}")
+            # tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
         pipe = LDMTextToImagePipeline(vqvae=vae, bert=text_model, tokenizer=tokenizer, unet=unet, scheduler=scheduler)
 
     pipe.save_pretrained(args.dump_path)
