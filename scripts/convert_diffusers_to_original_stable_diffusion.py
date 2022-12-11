@@ -232,5 +232,3 @@ if __name__ == "__main__":
         state_dict = {k: v.half() for k, v in state_dict.items()}
     state_dict = {"state_dict": state_dict}
     torch.save(state_dict, args.checkpoint_path)
-
-    print("Done, resuming training ...[0m")
