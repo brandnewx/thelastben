@@ -618,7 +618,7 @@ def convert_ldm_bert_checkpoint(checkpoint, config):
 
 def convert_ldm_clip_checkpoint(checkpoint):
     if os.path.exists(args.clipvit_path):
-        text_model = CLIPTokenizer.from_pretrained(args.clipvit_path)
+        text_model = CLIPTextModel.from_pretrained(args.clipvit_path)
     else:
         raise ValueError(f"--clipvit_path doesn't exist: {args.clipvit_path}")
         # text_model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
