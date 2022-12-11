@@ -18,7 +18,6 @@ import argparse
 import os
 
 import torch
-import wget
 
 try:
     from omegaconf import OmegaConf
@@ -674,7 +673,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.original_config_file is None:
-        wget.download('https://raw.githubusercontent.com/CompVis/stable-diffusion/main/configs/stable-diffusion/v1-inference.yaml')
+        os.system(
+            "wget https://raw.githubusercontent.com/CompVis/stable-diffusion/main/configs/stable-diffusion/v1-inference.yaml"
+        )
         args.original_config_file = "./v1-inference.yaml"
 
     original_config = OmegaConf.load(args.original_config_file)
