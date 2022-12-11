@@ -664,6 +664,13 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--tokenizer_path",
+        default="",
+        type=str,
+        help="tokenizer dir",
+    )
+
+    parser.add_argument(
         "--bert_path",
         default="",
         type=str,
@@ -748,10 +755,10 @@ if __name__ == "__main__":
     text_model_type = original_config.model.params.cond_stage_config.target.split(".")[-1]
     if text_model_type == "FrozenCLIPEmbedder":
         text_model = convert_ldm_clip_checkpoint(checkpoint)
-        if os.path.exists(args.clipvit_path):
-            tokenizer = CLIPTokenizer.from_pretrained(args.clipvit_path)
+        if os.path.exists(args.tokenizer_path):
+            tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_path)
         else:
-            raise ValueError(f"--clipvit_path doesn't exist: {args.clipvit_path}")
+            raise ValueError(f"--tokenizer_path doesn't exist: {args.tokenizer_path}")
             # tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
         safety_checker = None
         feature_extractor = None
