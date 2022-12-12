@@ -686,6 +686,15 @@ if __name__ == "__main__":
             " higher quality images for inference. Non-EMA weights are usually better to continue fine-tuning."
         ),
     )
+    parser.add_argument(
+        "--extract_ema",
+        action="store_true",
+        help=(
+            "Only relevant for checkpoints that have both EMA and non-EMA weights. Whether to extract the EMA weights"
+            " or not. Defaults to `False`. Add `--extract_ema` to extract the EMA weights. EMA weights usually yield"
+            " higher quality images for inference. Non-EMA weights are usually better to continue fine-tuning."
+        ),
+    )
     parser.add_argument("--dump_path", default=None, type=str, required=True, help="Path to the output model.")
 
     args = parser.parse_args()

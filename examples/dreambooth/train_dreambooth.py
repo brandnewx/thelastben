@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import itertools
 import math
 import os
@@ -30,7 +31,7 @@ import json
 logger = get_logger(__name__)
 
 
-def parse_args():
+def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
         "--subfolder_mode",
@@ -56,6 +57,13 @@ def parse_args():
         default=None,
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--revision",
+        type=str,
+        default=None,
+        required=False,
+        help="Revision of pretrained model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--tokenizer_name",
@@ -247,7 +255,11 @@ def parse_args():
 
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
 
-    args = parser.parse_args()
+    if input_args is not None:
+        args = parser.parse_args(input_args)
+    else:
+        args = parser.parse_args()
+
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
@@ -559,11 +571,15 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
     if num_new_images <= 0:
         return
 
-    torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        args.pretrained_model_name_or_path, torch_dtype=torch_dtype
-    )
-    pipeline.set_progress_bar_config(disable=True)
+        if cur_class_images < args.num_class_images:
+            torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
+            pipeline = StableDiffusionPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                torch_dtype=torch_dtype,
+                safety_checker=None,
+                revision=args.revision,
+            )
+            pipeline.set_progress_bar_config(disable=True)
 
     logger.info(f"Number of class images to sample: {num_new_images}.")
 
@@ -579,7 +595,9 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
         with torch.autocast("cuda"), torch.inference_mode():
             images = pipeline(example["prompt"]).images
             for i, image in enumerate(images):
-                image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
+                hash_image = hashlib.sha1(image.tobytes()).hexdigest()
+                image_filename = class_images_dir / f"{example['index'][i] + cur_class_images}-{hash_image}.jpg"
+                image.save(image_filename)
                 if i % 10 == 0:
                     print("")
                     sys.stdout.flush()
@@ -660,9 +678,16 @@ def main():
 
     # Load the tokenizer
     if args.tokenizer_name:
-        tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name)
+        tokenizer = CLIPTokenizer.from_pretrained(
+            args.tokenizer_name,
+            revision=args.revision,
+        )
     elif args.pretrained_model_name_or_path:
-        tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
+        tokenizer = CLIPTokenizer.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="tokenizer",
+            revision=args.revision,
+        )
 
     # Load models and create wrapper for stable diffusion
     text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
@@ -746,7 +771,12 @@ def main():
         pixel_values = torch.stack(pixel_values)
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
-        input_ids = tokenizer.pad({"input_ids": input_ids}, padding=True, return_tensors="pt").input_ids
+        input_ids = tokenizer.pad(
+            {"input_ids": input_ids},
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids
 
         batch = {
             "input_ids": input_ids,
@@ -755,7 +785,7 @@ def main():
         return batch
 
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True
+        train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn, num_workers=1, pin_memory=True
     )
 
     weight_dtype = torch.float32
@@ -1012,6 +1042,7 @@ def main():
             args.pretrained_model_name_or_path,
             unet=accelerator.unwrap_model(unet),
             text_encoder=accelerator.unwrap_model(text_encoder),
+            revision=args.revision,
         )
         frz_dir = args.output_dir + "/text_encoder_frozen"
         pipeline.save_pretrained(args.output_dir)
@@ -1057,4 +1088,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)

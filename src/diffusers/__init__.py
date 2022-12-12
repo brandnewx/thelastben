@@ -9,7 +9,7 @@ from .utils import (
 )
 
 
-__version__ = "0.5.0.dev0"
+__version__ = "0.7.2"
 
 from .configuration_utils import ConfigMixin
 from .onnx_utils import OnnxRuntimeModel
@@ -18,7 +18,7 @@ from .utils import logging
 
 if is_torch_available():
     from .modeling_utils import ModelMixin
-    from .models import AutoencoderKL, UNet2DConditionModel, UNet2DModel, VQModel
+    from .models import AutoencoderKL, Transformer2DModel, UNet1DModel, UNet2DConditionModel, UNet2DModel, VQModel
     from .optimization import (
         get_constant_schedule,
         get_constant_schedule_with_warmup,
@@ -29,14 +29,28 @@ if is_torch_available():
         get_scheduler,
     )
     from .pipeline_utils import DiffusionPipeline
-    from .pipelines import DDIMPipeline, DDPMPipeline, KarrasVePipeline, LDMPipeline, PNDMPipeline, ScoreSdeVePipeline
+    from .pipelines import (
+        DanceDiffusionPipeline,
+        DDIMPipeline,
+        DDPMPipeline,
+        KarrasVePipeline,
+        LDMPipeline,
+        PNDMPipeline,
+        RePaintPipeline,
+        ScoreSdeVePipeline,
+    )
     from .schedulers import (
         DDIMScheduler,
         DDPMScheduler,
+        EulerAncestralDiscreteScheduler,
+        EulerDiscreteScheduler,
+        IPNDMScheduler,
         KarrasVeScheduler,
         PNDMScheduler,
+        RePaintScheduler,
         SchedulerMixin,
         ScoreSdeVeScheduler,
+        VQDiffusionScheduler,
     )
     from .training_utils import EMAModel
 else:
@@ -52,13 +66,20 @@ if is_torch_available() and is_transformers_available():
         LDMTextToImagePipeline,
         StableDiffusionImg2ImgPipeline,
         StableDiffusionInpaintPipeline,
+        StableDiffusionInpaintPipelineLegacy,
         StableDiffusionPipeline,
+        VQDiffusionPipeline,
     )
 else:
     from .utils.dummy_torch_and_transformers_objects import *  # noqa F403
 
 if is_torch_available() and is_transformers_available() and is_onnx_available():
-    from .pipelines import StableDiffusionOnnxPipeline
+    from .pipelines import (
+        OnnxStableDiffusionImg2ImgPipeline,
+        OnnxStableDiffusionInpaintPipeline,
+        OnnxStableDiffusionPipeline,
+        StableDiffusionOnnxPipeline,
+    )
 else:
     from .utils.dummy_torch_and_transformers_and_onnx_objects import *  # noqa F403
 
