@@ -581,6 +581,9 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
 
         for i, image in enumerate(images):
             image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
+            if i % 10 == 0:
+                print("")
+                sys.stdout.flush()
 
     del pipeline
     if torch.cuda.is_available():
