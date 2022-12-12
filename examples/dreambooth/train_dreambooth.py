@@ -18,7 +18,7 @@ from torch.utils.data import Dataset
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
-from diffusers import AutoencoderKL, EulerAncestralDiscreteScheduler, StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import AutoencoderKL, PNDMScheduler, DDIMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from huggingface_hub import HfFolder, Repository, whoami
 from PIL import Image
@@ -33,6 +33,12 @@ logger = get_logger(__name__)
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser.add_argument(
+        "--scheduler_name",
+        type=str,
+        default="PRETRAINED",
+        help="Name of noise scheduler for training.",
+    )
     parser.add_argument(
         "--subfolder_mode",
         action="store_true",
@@ -734,20 +740,23 @@ def main(args):
         eps=args.adam_epsilon,
     )
 
-    # noise_scheduler = PNDMScheduler.from_config(args.pretrained_model_name_or_path, subfolder="scheduler")
-    noise_scheduler = EulerAncestralDiscreteScheduler.from_config(
-        num_train_timesteps=1000,
-        beta_start=0.00085,
-        beta_end=0.012,
-        beta_schedule='scaled_linear',
-        trained_betas=None,
-        prediction_type='sample',
-        set_alpha_to_one=False,
-        skip_prk_steps=True,
-        steps_offset=1,
-        trained_betas=None,
-        clip_sample=False
-    )
+    if args.scheduler_name == "PRETRAINED":
+        noise_scheduler = PNDMScheduler.from_config(args.pretrained_model_name_or_path, subfolder="scheduler")
+    elif args.scheduler_name == "DDIM":
+        noise_scheduler = DDIMScheduler(
+            num_train_timesteps=1000,
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule='scaled_linear',
+            trained_betas=None,
+            # prediction_type='sample',
+            set_alpha_to_one=False,
+            # skip_prk_steps=True,
+            steps_offset=1,
+            clip_sample=False
+        )
+    else:
+        raise ValueError(f"Unsupported noise scheduler: {args.scheduler_name}")
 
     if not args.subfolder_mode:
         train_dataset = DreamBoothDataset(
