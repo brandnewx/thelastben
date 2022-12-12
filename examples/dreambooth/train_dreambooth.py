@@ -574,16 +574,15 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
     pipeline.to(accelerator.device)
 
     for example in tqdm(
-        sample_dataloader, desc="Generating class images for '{class_prompt}'", disable=not accelerator.is_local_main_process
+        sample_dataloader, desc=f"Generating class images for '{class_prompt}'", disable=not accelerator.is_local_main_process
     ):
         with torch.autocast("cuda"), torch.inference_mode():
             images = pipeline(example["prompt"]).images
-
-        for i, image in enumerate(images):
-            image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
-            if i % 10 == 0:
-                print("")
-                sys.stdout.flush()
+            for i, image in enumerate(images):
+                image.save(class_images_dir / f"{example['index'][i] + cur_class_images}.jpg")
+                if i % 10 == 0:
+                    print("")
+                    sys.stdout.flush()
 
     del pipeline
     if torch.cuda.is_available():
@@ -861,6 +860,9 @@ def main():
 
     loss_avg = AverageMeter()
     text_enc_context = nullcontext() if args.train_text_encoder else torch.no_grad()
+
+    set_seed(args.seed)
+
     for epoch in range(args.num_train_epochs):
         unet.train()
         if args.train_text_encoder:
