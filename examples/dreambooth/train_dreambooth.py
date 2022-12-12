@@ -571,15 +571,15 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
     if num_new_images <= 0:
         return
 
-        if cur_class_images < args.num_class_images:
-            torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
-            pipeline = StableDiffusionPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                torch_dtype=torch_dtype,
-                safety_checker=None,
-                revision=args.revision,
-            )
-            pipeline.set_progress_bar_config(disable=True)
+    if cur_class_images < args.num_class_images:
+        torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            torch_dtype=torch_dtype,
+            safety_checker=None,
+            revision=args.revision,
+        )
+        pipeline.set_progress_bar_config(disable=True)
 
     logger.info(f"Number of class images to sample: {num_new_images}.")
 
@@ -607,12 +607,11 @@ def generate_class_samples(args, accelerator: Accelerator, class_images_dir: Pat
         torch.cuda.empty_cache()
 
 
-def main():
+def main(args):
     # Clear cache
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    args = parse_args()
     logging_dir = Path(args.output_dir, args.logging_dir)
     i = args.save_starting_step
 

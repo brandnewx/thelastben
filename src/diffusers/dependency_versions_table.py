@@ -3,7 +3,7 @@
 # 2. run `make deps_table_update``
 deps = {
     "Pillow": "Pillow==9.3.0",
-    "accelerate": "accelerate==0.12.0",
+    "accelerate": "accelerate==0.14.0",
     "black": "black==22.8",
     "datasets": "datasets==2.7.1",
     "filelock": "filelock==3.8.0",
@@ -17,6 +17,7 @@ deps = {
     "jaxlib": "jaxlib==0.3.25",
     "modelcards": "modelcards==0.1.6",
     "numpy": "numpy==1.23.5",
+    "parameterized": "parameterized",
     "onnxruntime": "onnxruntime==1.13.1",
     "pytest": "pytest==7.2.0",
     "pytest-timeout": "pytest-timeout==2.1.0",
