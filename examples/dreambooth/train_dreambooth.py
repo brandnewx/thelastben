@@ -900,13 +900,13 @@ def main(args):
     # Load last session if exists
     froze_text = False
     session = {"session_step": 0}
-    sessionFilePath = args.output_dir + '/training/session.json'
+    session_file_path = args.output_dir + '/training/session.json'
     if not os.path.isdir(args.output_dir + '/training'):
         os.makedirs(args.output_dir + '/training')
-    if os.path.isfile(sessionFilePath) and os.path.getsize(sessionFilePath) > 0 and os.path.getsize(sessionFilePath) < 10000:
+    if os.path.isfile(session_file_path) and os.path.getsize(session_file_path) > 0 and os.path.getsize(session_file_path) < 10000:
         # with open(sessionFilePath, "rb") as f:
         #     session = pickle.load(f)
-        with open(sessionFilePath, "r") as f:
+        with open(session_file_path, "r") as f:
             session = json.load(f)
 
     loss_avg = AverageMeter()
@@ -1089,7 +1089,7 @@ def main(args):
         os.makedirs(args.output_dir + '/training')
     # with open(sessionFilePath, "wb+") as f:
     #     pickle.dump(session, f, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(sessionFilePath, "w+") as f:
+    with open(session_file_path, "w+") as f:
         json.dump(session, f)
 
     # Save final ckpt
